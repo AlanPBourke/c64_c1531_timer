@@ -1,0 +1,141 @@
+import stdio
+import c1531
+
+const array spriteshape @$3f00 = file("mouse_sprite.bin")
+
+const pointer TIMBLO_ptr = $dc06
+const pointer TIMBHI_ptr = $dc07
+const pointer CIAIDR_ptr = $dc0d
+const pointer CIACRB_ptr = $dc0f
+const pointer CINV_ptr  = $314
+const pointer CIAICR_ptr = $dc0d
+
+void main() {
+
+
+    const pointer screen = $0400
+
+    ubyte i
+
+    bool x_over                     // Sprite x > $ff flag
+    ubyte spr_x                     // Calculated sprite 0 x coord
+    ubyte spr_y                     // Calculated sprite 0 y coord
+    volatile byte spr_data_pointer @$07F8   // Sprite 0 data location pointer
+
+    ensure_mixedcase()
+
+    // Clear the top part of the default text screen 
+    for i, 0, paralleluntil, 250 {
+        screen[000+i] = 32
+    }
+
+    vic_bg_color0 = black
+    vic_border = light_grey
+    vic_spr_ena = $ff               // All sprites on
+
+    asm { sei }
+    
+    // CIA 1 Timer B
+    // Stop timer (bit 0 -> 0)    
+    // Set output to not go to port B (bit 1 -> 0)
+    // Set continuous mode ( bit 3 -> 0)
+    // Set to count CPU cycles ( bits 5, 6 -> 0)
+    CIACRB_ptr[0] = CIACRB_ptr[0] & %11000100
+
+    // C1531 mouse reports updates mouse pos every 512 microseconds.
+    // Assuming PAL 60hz display, no point in reading mouse pos more often that that.
+    // So set the timer accordingly. 
+    // on a PAL machine the timer ticks 985250 times a second.
+    // This means the timer value needs to be 16400 (1/16400/985250 = 60.07)
+    // Timer value is a word, being (256 x high byte) + low byte
+    // So high byte is 64, low byte 16
+    TIMBLO_ptr[0] = %00010000
+    TIMBHI_ptr[0] = %01000000
+    CINV_ptr[0] = timer.addr.lo
+    CINV_ptr[1] = timer.addr.hi
+    CIACRB_ptr[0] = CIACRB_ptr[0] | %00000001
+
+    asm { cli }
+
+    spr_data_pointer = $fc          // Sprite 0 data at $3f00
+
+    while true
+    {
+        // Display positional information.
+        putchar(19)                     // Cursor home
+        putchar(159)                    // Cyan
+        putstrz("Mouse Driver x: "z)
+        putword(mouse_x)
+        putchar(32)
+        new_line()      
+        putstrz("Mouse Driver y: "z)
+        putword(mouse_y)
+        putchar(32)
+        new_line()
+
+        // Mouse_x and mouse_y are the word-length positional values
+        // from the mouse. These don't translate to sprite coords directly.
+        spr_x = mouse_x.lo
+        spr_y = mouse_y + 30
+
+        // Constrain y coord to top and bottom of visible screen
+        // on PAL with standard borders and unexpanded sprite.
+        if spr_y < 50 {
+            spr_y = 50
+        }
+
+        // If the x coord returned by the mouse is > $ff, set the 
+        // separate MSB for the sprite in $d010, and start the coord
+        // back at zero.
+        if mouse_x > $ff {
+            vic_spr_hi_x = (vic_spr_hi_x & %11111110) | %00000001
+            spr_x = mouse_x.lo - $ff - 1
+            //spr_x = 0
+            x_over = true
+        }
+        else {
+            vic_spr_hi_x = (vic_spr_hi_x & %11111110) | %00000000
+            x_over = false
+        }
+
+        // Constrain x coord to visible screen (when x < $ff)
+        if (spr_x < 24) && (x_over == false) {
+            spr_x = 24 
+        }
+
+        if (spr_x > 65) && (x_over == true) {
+            spr_x = 65
+        }
+
+        vic_spr0_y = spr_y
+        vic_spr0_x = spr_x
+
+        putstrz("Sprite 0 x: "z) 
+        putword(0000 + spr_x)
+        putchar(32)
+
+        if x_over == true {
+            putstrz("($D010 = %11111111)   "z) 
+        }
+        else {
+            putstrz("($D010 = %11111110)   "z) 
+        }
+        
+        new_line()
+        new_line()
+        putstrz("Sprite 0 y: "z) 
+        putword(0000 + spr_y)
+        putchar(32)
+
+    }
+
+}
+
+void timer() @4000 {
+    
+    if ((CIAICR_ptr[0]  & %00000001) == 1) {
+        c1531_mouse()                   // Read the mouse position
+    }
+    asm { jmp $ea81 }
+}
+
