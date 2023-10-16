@@ -3,15 +3,18 @@ import c1531
 
 const array spriteshape @$3f00 = file("mouse_sprite.bin")
 
-const pointer TIMBLO_ptr = $dc06
-const pointer TIMBHI_ptr = $dc07
-const pointer CIAIDR_ptr = $dc0d
-const pointer CIACRB_ptr = $dc0f
+// CIA 1 Timer B stuff.
+volatile byte TIMBLO        @$dc06      // Timer low byte
+volatile byte TIMBHI        @$dc07      // Timer high byte
+volatile byte CIACRB        @$dc0f      // Timer B control
+volatile byte CIAICR        @$dc0d      // CIA interrupt control
+
+// Sprite 0 data location pointer
+volatile byte spr_data_pointer  @$07F8   
+
 const pointer CINV_ptr  = $314
-const pointer CIAICR_ptr = $dc0d
 
 void main() {
-
 
     const pointer screen = $0400
 
@@ -20,7 +23,6 @@ void main() {
     bool x_over                     // Sprite x > $ff flag
     ubyte spr_x                     // Calculated sprite 0 x coord
     ubyte spr_y                     // Calculated sprite 0 y coord
-    volatile byte spr_data_pointer @$07F8   // Sprite 0 data location pointer
 
     ensure_mixedcase()
 
@@ -30,17 +32,17 @@ void main() {
     }
 
     vic_bg_color0 = black
-    vic_border = light_grey
+    vic_border = dark_grey
     vic_spr_ena = $ff               // All sprites on
 
-    asm { sei }
+    asm { sei }                     // Interrupts off
     
     // CIA 1 Timer B
     // Stop timer (bit 0 -> 0)    
     // Set output to not go to port B (bit 1 -> 0)
     // Set continuous mode ( bit 3 -> 0)
     // Set to count CPU cycles ( bits 5, 6 -> 0)
-    CIACRB_ptr[0] = CIACRB_ptr[0] & %11000100
+    CIACRB &= %11000100
 
     // C1531 mouse reports updates mouse pos every 512 microseconds.
     // Assuming PAL 60hz display, no point in reading mouse pos more often that that.
@@ -49,13 +51,13 @@ void main() {
     // This means the timer value needs to be 16400 (1/16400/985250 = 60.07)
     // Timer value is a word, being (256 x high byte) + low byte
     // So high byte is 64, low byte 16
-    TIMBLO_ptr[0] = %00010000
-    TIMBHI_ptr[0] = %01000000
+    TIMBLO = %00010000
+    TIMBHI = %01000000
     CINV_ptr[0] = timer.addr.lo
     CINV_ptr[1] = timer.addr.hi
-    CIACRB_ptr[0] = CIACRB_ptr[0] | %00000001
+    CIACRB |= %00000001
 
-    asm { cli }
+    asm { cli }                     // Interrupts on
 
     spr_data_pointer = $fc          // Sprite 0 data at $3f00
 
@@ -131,11 +133,12 @@ void main() {
 
 }
 
-void timer() @4000 {
+void timer() {
     
-    if ((CIAICR_ptr[0]  & %00000001) == 1) {
+    // Did interrupt come from the CIA timer ?
+    if ((CIAICR & %00000001) == 1) {
         c1531_mouse()                   // Read the mouse position
     }
-    asm { jmp $ea81 }
+    asm { jmp $ea81 }                   // Exit through normal Kernal IRQ vector.
 }
 
